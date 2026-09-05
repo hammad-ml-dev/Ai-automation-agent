@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Automation Agent — Live Demo | Hammad Durrani</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Fraunces:opsz,wght@9..144,700&display=swap" rel="stylesheet" />
+  <style>
+    :root { --bg:#0f1419; --text:#e8eef7; --muted:#93a4bd; --accent:#7c9cff; --ok:#3dd6c6; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:"DM Sans",system-ui; color:var(--text); min-height:100vh;
+      background: radial-gradient(800px 400px at 0% 0%, rgba(124,156,255,.2), transparent), var(--bg); }
+    .wrap { max-width:720px; margin:0 auto; padding:40px 20px 80px; }
+    h1 { font-family: Fraunces, Georgia, serif; margin:0 0 8px; font-size:clamp(1.8rem,4vw,2.4rem); }
+    .lead { color:var(--muted); line-height:1.55; }
+    .badge { display:inline-block; margin:14px 0 20px; padding:4px 10px; border-radius:999px; background:var(--accent); color:#0f1419; font-size:12px; font-weight:700; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+    .chip { border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.04); padding:8px 12px; border-radius:999px; font-size:13px; cursor:pointer; }
+    .chip:hover { border-color: var(--accent); }
+    .row { display:flex; gap:8px; }
+    input { flex:1; padding:14px; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:#121a24; color:var(--text); font:inherit; }
+    button { padding:14px 18px; border:0; border-radius:10px; background:var(--ok); color:#0f1419; font-weight:700; cursor:pointer; }
+    .step { padding:12px 14px; border-radius:10px; border:1px solid rgba(255,255,255,.1); margin:8px 0; background:rgba(255,255,255,.03); font-size:14px; }
+    .step.tool { border-color: rgba(124,156,255,.4); }
+    .step.final { border-color: rgba(61,214,198,.4); }
+    footer { margin-top:28px; color:var(--muted); font-size:14px; }
+    footer a { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AI Automation Agent</h1>
+    <p class="lead">Browser demo of a ReAct-style loop: the agent decides which tool to use, runs it, then answers. Offline heuristic brain — no API key needed here. Clone the repo for live Groq mode.</p>
+    <span class="badge">DEMO MODE · offline tools</span>
+    <div class="chips">
+      <button class="chip" type="button" data-q="What is today's date?">Today's date</button>
+      <button class="chip" type="button" data-q="If I earn AED 20000 per month, how much is that per year?">Yearly salary math</button>
+      <button class="chip" type="button" data-q="Search for python jobs in Dubai">Search jobs</button>
+      <button class="chip" type="button" data-q="Save a note: Apply to 5 Dubai jobs today">Save a note</button>
+    </div>
+    <div class="row">
+      <input id="q" placeholder="Ask the agent to calculate, search, note, or check the date…" />
+      <button id="go" type="button">Run</button>
+    </div>
+    <div id="trace"></div>
+    <footer>By <a href="https://github.com/hammad-ml-dev">Hammad Durrani</a> · <a href="https://github.com/hammad-ml-dev/Ai-automation-agent">Source</a></footer>
+  </div>
+  <script>
+    const today = () => {
+      const d = new Date();
+      return d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    };
+    const search = (q) => {
+      const mock = {
+        "python jobs dubai": "Found 847 Python developer jobs in Dubai on LinkedIn.",
+        "machine learning": "ML is a subset of AI focused on learning from data.",
+        "groq api": "Groq offers fast inference for open-source LLMs, free tier available.",
+        "dubai tech salary": "Average ML Engineer salary in Dubai: AED 18,000–25,000/month.",
+      };
+      const lower = q.toLowerCase();
+      for (const [k, v] of Object.entries(mock)) if (lower.includes(k)) return v;
+      return `No results found for '${q}'. Try a different search term.`;
+    };
+    const decide = (req) => {
+      const t = req.toLowerCase();
+      if (/date|today|day/.test(t)) return { tool: "get_current_date", input: "" };
+      if (/save|note|remind/.test(t)) {
+        let note = req;
+        for (const p of ["save a note:", "save note:", "note:"]) {
+          const i = t.indexOf(p); if (i >= 0) { note = req.slice(i + p.length).trim(); break; }
+        }
+        return { tool: "save_note", input: note };
+      }
+      if (/search|find|look up|jobs/.test(t)) return { tool: "search_web", input: req };
+      if (/calculate|how much|per year|\*|×/.test(t) || /[\d].*[\+\-\*\/]/.test(req)) {
+        const yearly = t.match(/([\d,\.]+)\s*(?:aed|usd)?\s*(?:per|\/)?\s*month/);
+        if (yearly && /year|annual/.test(t)) return { tool: "calculate", input: `${yearly[1].replace(/,/g,"")} * 12` };
+        const m = req.match(/([\d\.\s\+\-\*\/\(\)%]+)/);
+        return { tool: "calculate", input: (m && m[1].trim()) || "20000 * 12" };
+      }
+      return null;
+    };
+    const runTool = (name, input) => {
+      if (name === "get_current_date") return `Today is ${today()}`;
+      if (name === "calculate") {
+        try {
+          if (![...input].every(c => "0123456789 +-*/.()%".includes(c))) return "Error: only basic math is allowed";
+          // eslint-disable-next-line no-new-func
+          const result = Function(`"use strict"; return (${input})`)();
+          return `${input} = ${Number(result).toFixed(2)}`;
+        } catch (e) { return `Math error: ${e.message}`; }
+      }
+      if (name === "save_note") {
+        const notes = JSON.parse(localStorage.getItem("agent_notes") || "[]");
+        notes.push({ at: new Date().toISOString(), content: input });
+        localStorage.setItem("agent_notes", JSON.stringify(notes));
+        return "Note saved to browser localStorage";
+      }
+      if (name === "search_web") return search(input);
+      return "Unknown tool";
+    };
+    const finalize = (name, result) => {
+      if (name === "get_current_date") return result + ".";
+      if (name === "calculate") return `Result: ${result}`;
+      if (name === "save_note") return "Done — your note has been saved.";
+      if (name === "search_web") return `Search result: ${result}`;
+      return result;
+    };
+    const render = (steps) => {
+      document.getElementById("trace").innerHTML = steps.map(s => {
+        if (s.type === "tool") return `<div class="step tool"><strong>${s.name}</strong>(${JSON.stringify(s.input)})<br/>→ ${s.result}</div>`;
+        return `<div class="step final"><strong>Answer:</strong> ${s.content}</div>`;
+      }).join("");
+    };
+    const go = () => {
+      const req = document.getElementById("q").value.trim();
+      if (!req) return;
+      const call = decide(req);
+      if (!call) {
+        render([{ type: "final", content: "I can check today's date, calculate math, save notes, or search (mock). Try a sample chip above." }]);
+        return;
+      }
+      const result = runTool(call.tool, call.input);
+      render([
+        { type: "tool", name: call.tool, input: call.input, result },
+        { type: "final", content: finalize(call.tool, result) },
+      ]);
+    };
+    document.getElementById("go").onclick = go;
+    document.querySelectorAll(".chip").forEach(b => b.onclick = () => {
+      document.getElementById("q").value = b.dataset.q;
+      go();
+    });
+  </script>
+</body>
+</html>
